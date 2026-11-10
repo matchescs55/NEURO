@@ -250,6 +250,7 @@ input[type=text]{font:inherit;padding:.7em 1em;border-radius:12px;border:2px sol
 .gz{position:absolute;top:0;bottom:0;background:#2fcf86aa;border-left:3px solid #7ef0b0;border-right:3px solid #7ef0b0;transition:left .25s,width .25s,background .2s}
 .gg{position:absolute;top:0;bottom:0;left:50%;transform:translateX(-50%);background:#ffd84acc;box-shadow:0 0 16px #ffd84a}
 .gn{position:absolute;top:-4px;bottom:-4px;width:8px;margin-left:-4px;border-radius:4px;background:#fff;box-shadow:0 0 12px #fff}
+input[type=email],input[type=password]{font:inherit;padding:.7em 1em;border-radius:12px;border:2px solid var(--lav);background:#0e0c22;color:var(--ink);width:min(100%,400px)}
 </style>
 </head>
 <body>
@@ -287,6 +288,7 @@ input[type=text]{font:inherit;padding:.7em 1em;border-radius:12px;border:2px sol
   <h3 style="margin-top:8px">Tema 1.1 · Neuropsicología básica para educadores <span class="tag">8 h · 8 niveles</span></h3><div class="map" id="lvls"></div><div id="more"></div><h3 style="margin-top:28px">Próximos temas del programa</h3><div class="map" id="topics"></div>
   <div class="card" id="certcard"></div>
   <div class="card" id="svcard"></div>
+  <div class="card" id="cloudcard"></div>
   <div class="row"><button class="ghost" id="reset">Reiniciar progreso</button></div>
 </section>
 
@@ -1119,7 +1121,7 @@ window.bkSchedule=()=>{clearTimeout(tmr);tmr=setTimeout(snap,800)};
 addEventListener("pagehide",snap);document.addEventListener("visibilitychange",()=>{if(document.hidden)snap()});
 document.addEventListener("pointerdown",()=>{try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}},{once:true});
 function apply(o){Object.keys(S).forEach(k=>delete S[k]);Object.assign(S,{name:"",xp:0,done:[],lv:[],att:{},stars:{},best:0,ds:0,day:"",vo:{p:0,n:"",on:true,sfx:true}},o);S.stars=S.stars||{};S.att=S.att||{};S.vo=Object.assign({p:0,n:"",on:true,sfx:true},S.vo||{});save()}
-const okObj=o=>o&&typeof o==="object"&&Array.isArray(o.lv)&&typeof o.xp==="number";
+window.synApply=apply;const okObj=o=>o&&typeof o==="object"&&Array.isArray(o.lv)&&typeof o.xp==="number";
 /* si el navegador borró los datos, recupera desde IndexedDB */
 (async()=>{let had=false;try{had=!!localStorage.getItem("synthia2")}catch(e){}if(had)return;
  try{const r=await get("latest");if(r&&r.sum===await sum(r.data)){const o=JSON.parse(r.data);if(okObj(o)){apply(o);toast("♻️ Recuperamos tu progreso desde la copia automática")}}}catch(e){}})();
@@ -1133,6 +1135,58 @@ window.renderSv=async function(){const el=$("#svcard");if(!el)return;let r=null;
  $("#svf").onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const p=JSON.parse(await f.text());if(p.app!=="synthia"||typeof p.data!=="string")throw 0;if(p.sum!==await sum(p.data)){msg("⚠️ El archivo está dañado o fue modificado. No se cargó.",1);e.target.value="";return}const o=JSON.parse(p.data);if(!okObj(o))throw 0;if(!confirm("Se reemplazará tu progreso actual por el del archivo. ¿Continuar?")){e.target.value="";return}apply(o);toast("✅ Progreso cargado");map()}catch(x){msg("⚠️ No pude leer ese archivo.",1)}e.target.value=""};
  $$("#svcard [data-h]").forEach(b=>b.onclick=async()=>{try{const v=await get(b.dataset.h);if(!v||v.sum!==await sum(v.data))throw 0;const o=JSON.parse(v.data);if(!okObj(o))throw 0;if(!confirm("Volver a la copia de "+ago(v.t)+"? Se reemplaza tu progreso actual."))return;apply(o);toast("↩️ Copia restaurada");map()}catch(x){msg("⚠️ Esa copia no se pudo verificar.",1)}})};
 const _show=show;show=function(id){_show(id);if(id==="map")renderSv()};
+})();
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+/* ===== v12: guardado en la nube (Supabase) ===== */
+(function(){
+const URL_="https://lcxudovciqlmdnenyuqr.supabase.co";
+const KEY="sb_publishable_C5ffPj4sC_N4C2RDekDyPw_CkoIa3J4"; /* Supabase > Project Settings > API Keys: la clave "anon" o "publishable". NUNCA la service_role */
+const ready=()=>!!(window.supabase&&KEY&&!KEY.startsWith("PEGA"));
+let sb=null,user=null,tmr=null,status="",paused=false,syncedFor=null;
+const esc=t=>String(t).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const score=o=>((o&&o.lv)||[]).length*100000+((o&&o.xp)||0);
+function client(){if(!sb&&ready())sb=window.supabase.createClient(URL_,KEY,{auth:{persistSession:true,autoRefreshToken:true}});return sb}
+async function pull(){const{data,error}=await sb.from("progress").select("data,updated_at").maybeSingle();if(error)throw error;return data}
+async function push(){const{error}=await sb.from("progress").upsert({user_id:user.id,data:S,updated_at:new Date().toISOString()},{onConflict:"user_id"});if(error)throw error}
+const setSt=t=>{status=t;const e=$("#cloudst");if(e)e.textContent=t};
+const hhmm=()=>new Date().toLocaleTimeString("es-CO",{hour:"2-digit",minute:"2-digit"});
+/* guardado automático (se engancha a save()) */
+const _b=window.bkSchedule;
+window.bkSchedule=()=>{if(_b)_b();if(!user||paused||!client())return;clearTimeout(tmr);tmr=setTimeout(async()=>{try{await push();setSt("☁️ Guardado "+hhmm())}catch(e){setSt("⚠️ No se pudo guardar: "+e.message)}},4000)};
+async function firstSync(){try{const row=await pull();
+  if(!row){await push();setSt("☁️ Progreso subido a la nube")}
+  else{const c=row.data;
+   if(!c||!Array.isArray(c.lv)){await push();setSt("☁️ Progreso subido")}
+   else if(JSON.stringify(c)===JSON.stringify(S)){setSt("☁️ Todo al día")}
+   else if(score(c)>score(S)){
+    const empty=score(S)===0;
+    if(empty||confirm("La nube tiene más progreso ("+c.lv.length+" niveles, "+c.xp+" pts) que este dispositivo ("+S.lv.length+" niveles, "+S.xp+" pts).\n\n¿Usar el progreso de la nube?\n(Si cancelas, no se sobrescribe nada hasta que tú elijas.)")){
+     window.synApply(c);setSt("☁️ Progreso descargado de la nube");toast("☁️ Progreso recuperado de la nube");if($("#map").classList.contains("on"))map()}
+    else{paused=true;setSt("⏸️ Sin sincronizar: usa «Subir ahora» o «Descargar de la nube»")}}
+   else{await push();setSt("☁️ Progreso subido a la nube")}}}
+ catch(e){setSt("⚠️ "+e.message)}renderCloud()}
+function renderCloud(){const el=$("#cloudcard");if(!el)return;
+ if(!window.supabase){el.innerHTML='<h3>☁️ Guardado en la nube</h3><p class="mute">Necesitas conexión a internet para usar el guardado en la nube.</p>';return}
+ if(!ready()){el.innerHTML='<h3>☁️ Guardado en la nube</h3><p class="mute">Aún no está activado en esta versión.</p>';return}
+ const msg=(t,bad)=>{const m=$("#clm");if(!m)return;m.style.color=bad?"var(--bad)":"var(--good)";m.textContent=t};
+ if(!user){
+  el.innerHTML='<h3>☁️ Guardar en la nube</h3><p>Crea una cuenta gratis con tu correo y tu progreso se guardará solo. Podrás recuperarlo desde cualquier dispositivo.</p><label for="cle">Correo</label><br><input id="cle" type="email" autocomplete="email" placeholder="tucorreo@ejemplo.com"><br><br><label for="clp">Contraseña (mínimo 8 caracteres)</label><br><input id="clp" type="password" autocomplete="current-password"><div class="row"><button id="clin">Entrar</button><button class="ghost" id="clup">Crear cuenta</button></div><div class="fb" id="clm" role="status"></div>';
+  const cred=()=>{const e=$("#cle").value.trim(),p=$("#clp").value;if(!e||!p){msg("Escribe tu correo y tu contraseña.",1);return null}if(p.length<8){msg("La contraseña debe tener al menos 8 caracteres.",1);return null}return{email:e,password:p}};
+  $("#clin").onclick=async()=>{const c=cred();if(!c)return;$("#clin").disabled=true;const{error}=await client().auth.signInWithPassword(c);$("#clin").disabled=false;if(error)msg("⚠️ "+error.message,1);else msg("✅ Entraste. Sincronizando…")};
+  $("#clup").onclick=async()=>{const c=cred();if(!c)return;$("#clup").disabled=true;const{data,error}=await client().auth.signUp(c);$("#clup").disabled=false;if(error)msg("⚠️ "+error.message,1);else if(!data.session)msg("✅ Cuenta creada. Revisa tu correo para confirmarla y luego pulsa «Entrar».");else msg("✅ Cuenta creada. Sincronizando…")};
+ }else{
+  el.innerHTML='<h3>☁️ Nube conectada</h3><p>Cuenta: <b>'+esc(user.email)+'</b></p><div class="fb" id="cloudst" role="status">'+esc(status)+'</div><div class="row"><button id="clpush">⬆️ Subir ahora</button><button class="ghost" id="clpull">⬇️ Descargar de la nube</button><button class="ghost" id="clout">Salir</button></div>';
+  $("#clpush").onclick=async()=>{try{paused=false;await push();setSt("☁️ Guardado "+hhmm())}catch(e){setSt("⚠️ "+e.message)}};
+  $("#clpull").onclick=async()=>{try{const row=await pull();if(!row||!row.data||!Array.isArray(row.data.lv)){setSt("La nube aún no tiene progreso guardado.");return}if(!confirm("Se reemplazará el progreso de este dispositivo por el de la nube. ¿Continuar?"))return;window.synApply(row.data);paused=false;toast("☁️ Progreso descargado");map()}catch(e){setSt("⚠️ "+e.message)}};
+  $("#clout").onclick=async()=>{await client().auth.signOut()};
+ }}
+if(ready()){const c=client();c.auth.onAuthStateChange((ev,session)=>{user=session?session.user:null;if(!user){syncedFor=null;paused=false;status=""}
+  if(user&&syncedFor!==user.id&&(ev==="INITIAL_SESSION"||ev==="SIGNED_IN")){syncedFor=user.id;setTimeout(firstSync,0)}
+  else setTimeout(renderCloud,0)})}
+const _show2=show;show=function(id){_show2(id);if(id==="map")renderCloud()};
 })();
 </script>
 </body>
